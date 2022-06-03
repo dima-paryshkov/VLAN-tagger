@@ -26,7 +26,73 @@ char *in_if = NULL;
 char *out_if = NULL;
 char *name_conf_file = NULL;
 
-int is_collision(struct ip_vlan_t *ip_vlan_entry)
+static int is_collision(struct ip_vlan_t *ip_vlan_entry);
+
+static int argv_process(int argc, char **argv);
+
+void print_pool_to_file(
+    char *filename, 
+    struct ip_vlan_t *pool_addrs, 
+    size_t size_pool);
+
+static int argv_process(
+    int argc, 
+    char **argv);
+
+int main(int argc, char **argv)
+{
+    int return_code = 0;
+
+    if (argc < 2)
+    {
+        fprintf(stderr, "Too few arguments. Use %s -h for detail\n", argv[0]);
+        return -1;
+    }
+
+    pool_ip_vlan = malloc(max_size_pool * sizeof(struct ip_vlan_t));
+    if (pool_ip_vlan == NULL)
+    {
+        perror("malloc");
+        return -11;
+    }
+
+    if (argv_process(argc, argv) == 1)
+    {
+        return 0;
+    }
+
+    return_code = is_interface_exist(in_if);
+    if (return_code == -1)
+    {
+        fprintf(stderr, "Can't get info about %s\n", in_if);
+        return -2;
+    }
+    else if (return_code == 1)
+    {
+        fprintf(stderr, "Input interface %s doesn't exist\n", in_if);
+        return -3;
+    }
+
+    return_code = is_interface_exist(out_if);
+    if (return_code == -1)
+    {
+        fprintf(stderr, "Can't get info about %s\n", out_if);
+        return -2;
+    }
+    else if (return_code == 1)
+    {
+        fprintf(stderr, "Output interface %s doesn't exist\n", out_if);
+        return -3;
+    }
+
+    /*
+        Здесь запускаем демона
+     */ 
+
+    return 0;
+}
+
+static int is_collision(struct ip_vlan_t *ip_vlan_entry)
 {
     for (int i = 0; i < size_pool; i++)
     {
@@ -55,7 +121,7 @@ int is_collision(struct ip_vlan_t *ip_vlan_entry)
     return 0;
 }
 
-int add_ip_to_pool(struct ip_vlan_t *ip_vlan_entry)
+static int add_ip_to_pool(struct ip_vlan_t *ip_vlan_entry)
 {
     if (is_collision(ip_vlan_entry) == 0)
     {
@@ -93,7 +159,7 @@ void print_pool_to_file(char *filename, struct ip_vlan_t *pool_addrs, size_t siz
     fclose(pool_conffile);
 }
 
-int argv_process(int argc, char **argv)
+static int argv_process(int argc, char **argv)
 {
     struct ip_vlan_t ip_vlan_entry = {0};
     FILE *conf_file = NULL;
@@ -201,55 +267,6 @@ int argv_process(int argc, char **argv)
     {
         fprintf(stderr, "Too few arguments or incorrect value of arguments. Use '%s -h' for detail\n", argv[0]);
         return 1;
-    }
-
-    return 0;
-}
-
-int main(int argc, char **argv)
-{
-    int return_code = 0;
-
-    if (argc < 2)
-    {
-        fprintf(stderr, "Too few arguments. Use %s -h for detail\n", argv[0]);
-        return -1;
-    }
-
-    pool_ip_vlan = malloc(max_size_pool * sizeof(struct ip_vlan_t));
-    if (pool_ip_vlan == NULL)
-    {
-        perror("malloc");
-        return -11;
-    }
-
-    if (argv_process(argc, argv) == 1)
-    {
-        return 0;
-    }
-
-    return_code = is_interface_exist(in_if);
-    if (return_code == -1)
-    {
-        fprintf(stderr, "Can't get info about %s\n", in_if);
-        return -2;
-    }
-    else if (return_code == 1)
-    {
-        fprintf(stderr, "Input interface %s doesn't exist\n", in_if);
-        return -3;
-    }
-
-    return_code = is_interface_exist(out_if);
-    if (return_code == -1)
-    {
-        fprintf(stderr, "Can't get info about %s\n", out_if);
-        return -2;
-    }
-    else if (return_code == 1)
-    {
-        fprintf(stderr, "Output interface %s doesn't exist\n", out_if);
-        return -3;
     }
 
     return 0;
