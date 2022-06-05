@@ -11,6 +11,8 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <syslog.h>
+#include <net/ethernet.h>
+#include <netinet/ip.h>
 
 #include "interface.h"
 
@@ -25,6 +27,12 @@ struct ip_vlan_t
     struct in_addr ip_addr;
 };
 
+struct vlanhdr
+{
+    uint16_t tpid;
+    uint16_t tci;
+};
+
 int is_daemon_running = 1;
 
 struct ip_vlan_t *pool_ip_vlan = NULL;
@@ -37,7 +45,9 @@ char *name_conf_file = NULL;
 
 static int is_collision(struct ip_vlan_t *ip_vlan_entry);
 
-static int argv_process(int argc, char **argv);
+static int argv_process(
+    int argc, 
+    char **argv);
 
 void print_pool_to_file(
     char *filename,
@@ -51,6 +61,10 @@ static int argv_process(
 static void create_daemon(void);
 
 static void exit_signal_handler(int signum);
+
+int tagger(
+    unsigned char *buffer, 
+    size_t size_buffer);
 
 int main(int argc, char **argv)
 {
@@ -160,7 +174,10 @@ static int add_ip_to_pool(struct ip_vlan_t *ip_vlan_entry)
     return 0;
 }
 
-void print_pool_to_file(char *filename, struct ip_vlan_t *pool_addrs, size_t size_pool)
+void print_pool_to_file(
+    char *filename, 
+    struct ip_vlan_t *pool_addrs, 
+    size_t size_pool)
 {
     FILE *pool_conffile = NULL;
 
@@ -178,7 +195,9 @@ void print_pool_to_file(char *filename, struct ip_vlan_t *pool_addrs, size_t siz
     fclose(pool_conffile);
 }
 
-static int argv_process(int argc, char **argv)
+static int argv_process(
+    int argc, 
+    char **argv)
 {
     struct ip_vlan_t ip_vlan_entry = {0};
     FILE *conf_file = NULL;
@@ -287,6 +306,54 @@ static int argv_process(int argc, char **argv)
         fprintf(stderr, "Too few arguments or incorrect value of arguments. Use '%s -h' for detail\n", argv[0]);
         return 1;
     }
+    
+    return 0;
+}
+
+int find_vlan_by_ip(struct in_addr ip_addr)
+{
+    for (int i = 0; i < size_pool; i++)
+    {
+        if (ip_addr.s_addr == pool_ip_vlan[i].ip_addr.s_addr)
+        {
+            return pool_ip_vlan[i].vlan;
+        }
+    }
+    return -1;
+}
+
+int tagger(
+    unsigned char *buffer, 
+    size_t size_buffer)
+{
+    struct iphdr *iph = {0};
+    struct in_addr send_ip_addr = {0};
+    struct vlanhdr vlanhdr = {0};
+    int i = 0;
+    int vlan = 0;
+
+    iph = (struct iphdr *)(buffer + sizeof(struct ethhdr));
+
+    send_ip_addr.s_addr = iph->saddr;
+
+    vlan = find_vlan_by_ip(send_ip_addr);
+    if (vlan == -1)
+    {
+        return -1;
+    }
+
+    for (i = size_buffer - 1; i >= 16; i--)
+    {
+        buffer[i] = buffer[i - 4];
+    }
+
+    /* Для 802.1Q используется значение 0x8100 в качестве tpid*/
+    vlanhdr.tpid = ETH_P_8021Q;
+    vlanhdr.tci = vlan;
+    vlanhdr.tci &= 0x1F;
+
+    memcpy(buffer + ETH_ALEN * 2, &vlanhdr, sizeof(struct vlanhdr));
+>>>>>>> 94b57b7... feat tagger function (refs #83)
 
     return 0;
 }
