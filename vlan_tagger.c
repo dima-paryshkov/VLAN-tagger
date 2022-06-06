@@ -60,7 +60,7 @@ static int argv_process(
     int argc,
     char **argv);
 
-static void create_daemon(void);
+static int create_daemon(void);
 
 static void exit_signal_handler(int signum);
 
@@ -68,15 +68,24 @@ int tagger(
     unsigned char *buffer,
     size_t size_buffer);
 
+static int handle_interface_shutdown(
+    char *in_if, 
+    char *out_if, 
+    FILE *log_file);
+
 int main(int argc, char **argv)
 {
-    struct ifreq interface = {0};
+    struct ifreq interface_in = {0};
+    struct ifreq interface_out = {0};
     int socket_in_raw = 0;
+    int socket_out_raw = 0;
     struct sockaddr socket_in_raw_address = {0};
-    int socket_raw_adress_size = sizeof(socket_in_raw_address);
+    struct sockaddr socket_out_raw_address = {0};
     unsigned char *frame_buffer = NULL;
     struct iphdr *iph = {0};
     struct in_addr ip = {0};
+    int socket_in_raw_adress_size = sizeof(socket_in_raw_address);
+    int socket_out_raw_adress_size = sizeof(socket_out_raw_address);
     int frame_size = 0;
 
     int return_code = 0;
@@ -137,26 +146,43 @@ int main(int argc, char **argv)
     */
 
     socket_in_raw = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
-    frame_buffer = malloc(ETHERNET_FRAME_SIZE);
-    snprintf(interface.ifr_name, sizeof(interface.ifr_name), "%s", in_if);
     {
         perror("Creating raw socket failure. Try running as superuser");
         return -2;
     }
-    if (setsockopt(socket_in_raw, SOL_SOCKET, SO_BINDTODEVICE, (void *)&interface,
-                   sizeof(interface)) < 0)
+    
+    snprintf(interface_in.ifr_name, sizeof(interface_in.ifr_name), "%s", in_if);
+    if (setsockopt(socket_in_raw, SOL_SOCKET, SO_BINDTODEVICE, (void *)&interface_in,
+                   sizeof(interface_in)) < 0)
     {
         perror("Failure binding socket to interface");
         return -3;
     }
 
+    socket_out_raw = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
+    if (socket_out_raw < 0) 
+    {
+        perror("Creating raw socket failure. Try running as superuser");
+        return -2;
+    }
+    
+    snprintf(interface_out.ifr_name, sizeof(interface_out.ifr_name), "%s", out_if);
+    if (setsockopt(socket_out_raw, SOL_SOCKET, SO_BINDTODEVICE, (void*)&interface_out, sizeof(interface_out)) < 0)
+    {
+        perror("Failure binding socket to interface");
+        return -3;
+    }
+
+    frame_buffer = malloc(ETHERNET_FRAME_SIZE);
+
     while(is_daemon_running)
     {
         frame_size = recvfrom(socket_in_raw, frame_buffer, ETHERNET_FRAME_SIZE, 0,
-                            &socket_in_raw_address, &socket_raw_adress_size);
+                            &socket_in_raw_address, &socket_in_raw_adress_size);
         if (frame_size < 0) 
         {
-            fprintf(log_file, "Failure accepting frame\n");
+            fprintf(log_file, "Failure accepting frame from %s\n", out_if);
+            handle_interface_shutdown(in_if, out_if, log_file);
         }
 
         if (tagger(frame_buffer, frame_size) == -1)
@@ -166,12 +192,14 @@ int main(int argc, char **argv)
             fprintf(log_file, "ip %s doesn't exist in pool\n", inet_ntoa(ip));
         }
 
-        /*
-            Send buffer to output interface
-        */ 
-
+        frame_size = sendto(socket_out_raw, frame_buffer, ETHERNET_FRAME_SIZE, 0,
+                            &socket_out_raw_address, socket_out_raw_adress_size);
+        if (frame_size < 0) 
+        {
+            fprintf(log_file, "Failure send frame to %s\n", out_if);
+            handle_interface_shutdown(in_if, out_if, log_file);
+        }
     }
-
 
     return 0;
 }
@@ -414,7 +442,7 @@ static void exit_signal_handler(int signum)
     is_daemon_running = 0;
 }
 
-static void create_daemon(void)
+static int create_daemon(void)
 {
     pid_t pid = 0;
     pid_t sid = 0;
@@ -458,4 +486,39 @@ static void create_daemon(void)
     {
         close(x);
     }
+}
+
+static int handle_interface_shutdown(
+    char *in_if, 
+    char *out_if, 
+    FILE *log_file)
+{
+    if (is_interface_online(in_if) != 1)
+    {
+        fprintf(log_file, "input if(%s) shutdown\n", in_if);
+        while (is_interface_online(in_if) != 1 )
+        {
+            sleep(1);
+        }
+        fprintf(log_file, "input if(%s) is working\n", in_if);
+    }
+
+    if (is_interface_online(out_if) != 1)
+    {
+        fprintf(log_file, "output if(%s) shutdown\n", out_if);
+        while (is_interface_online(out_if) != 1 )
+        {
+            sleep(1);
+        }
+        fprintf(log_file, "output if(%s) is working", out_if);
+    }
+
+    /*
+        The function will end only when both interfaces are available.
+    */ 
+    if (is_interface_online(in_if) != 1 && is_interface_online(out_if) != 1)
+    {
+        handle_interface_shutdown(in_if, out_if, log_file);
+    }
+    return 0;
 }
