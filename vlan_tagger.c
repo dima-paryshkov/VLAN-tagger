@@ -1,15 +1,22 @@
-#include <stdio.h>
 #include <unistd.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <malloc.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <errno.h>
 #include <string.h>
+#include <signal.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <syslog.h>
+
 #include "interface.h"
 
 #define DFLT_CONF_FILE ".pool_ip_vlan.conf"
+#define LOGFILE_NAME "vlan_tagger.log"
+
 const int LEN_IF_NAME = 15;
 
 struct ip_vlan_t
@@ -17,6 +24,8 @@ struct ip_vlan_t
     unsigned short int vlan;
     struct in_addr ip_addr;
 };
+
+int is_daemon_running = 1;
 
 struct ip_vlan_t *pool_ip_vlan = NULL;
 size_t size_pool = 0;
@@ -31,17 +40,22 @@ static int is_collision(struct ip_vlan_t *ip_vlan_entry);
 static int argv_process(int argc, char **argv);
 
 void print_pool_to_file(
-    char *filename, 
-    struct ip_vlan_t *pool_addrs, 
+    char *filename,
+    struct ip_vlan_t *pool_addrs,
     size_t size_pool);
 
 static int argv_process(
-    int argc, 
+    int argc,
     char **argv);
+
+static void create_daemon(void);
+
+static void exit_signal_handler(int signum);
 
 int main(int argc, char **argv)
 {
     int return_code = 0;
+    FILE *log_file = NULL;
 
     if (argc < 2)
     {
@@ -57,11 +71,8 @@ int main(int argc, char **argv)
     }
 
     if (argv_process(argc, argv) == 1)
-    {
-        return 0;
-    }
 
-    return_code = is_interface_exist(in_if);
+        return_code = is_interface_exist(in_if);
     if (return_code == -1)
     {
         fprintf(stderr, "Can't get info about %s\n", in_if);
@@ -85,9 +96,17 @@ int main(int argc, char **argv)
         return -3;
     }
 
+    if ((log_file = fopen(LOGFILE_NAME, "w")) == NULL)
+    {
+        perror("fopen(logfile)");
+        return -1;
+    }
+
+    create_daemon();
+
     /*
-        Здесь запускаем демона
-     */ 
+        Body of daemon 
+    */ 
 
     return 0;
 }
@@ -270,4 +289,55 @@ static int argv_process(int argc, char **argv)
     }
 
     return 0;
+}
+
+static void exit_signal_handler(int signum)
+{
+    is_daemon_running = 0;
+}
+
+static void create_daemon(void)
+{
+    pid_t pid = 0;
+    pid_t sid = 0;
+
+    pid = fork();
+
+    if (pid == -1)
+    {
+        perror("fork");
+        return -1;
+    }
+    else if (pid > 0)
+        sid = setsid();
+    if (sid == -1)
+    {
+        perror("setsid");
+        return -1;
+    }
+
+    signal(SIGCHLD, SIG_IGN);
+    signal(SIGHUP, SIG_IGN);
+    signal(SIGINT, exit_signal_handler);
+
+    pid = fork();
+
+    if (pid == -1)
+    {
+        perror("fork");
+        return -1;
+    }
+    else if (pid > 0)
+    {
+        return 0;
+    }
+
+    umask(0);
+
+    chdir("/");
+
+    for (int x = sysconf(_SC_OPEN_MAX); x >= 0; x--)
+    {
+        close(x);
+    }
 }
