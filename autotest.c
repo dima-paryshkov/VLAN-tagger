@@ -19,7 +19,9 @@ struct vlanhdr
     uint16_t tci;
 };
 
-char list_ip[5][16] = {"140.106.157.116", "111.218.39.46", "59.108.145.157", "142.15.121.152", "6.162.212.148"};
+char list_ip[5][16] = {"140.106.157.116", "111.218.39.46", "59.108.145.157", \
+    "142.15.121.152", "6.162.212.148"};
+
 int list_vlan[5] = {3, 5, 4, 6, 5};
 
 int create_frame(unsigned char *frame_buffer, unsigned char *frame_buffer_with_vlan)
@@ -158,12 +160,13 @@ int main(int argc, char **argv)
             while ((frame_size = recvfrom(socket_out_if, frame_recv_buffer, 
                 ETR_FRAME_WITH_VLAN_SIZE, 0, &socket_out_address, 
                 &socket_out_adress_size)) != ETR_FRAME_WITH_VLAN_SIZE);
-                
+
             if ( frame_size < 0)
             {
                 perror("recvfrom");
             }
-            else if (memcmp(frame_recv_buffer, frame_buffer_with_vlan, ETR_FRAME_WITH_VLAN_SIZE) == 0)
+            else if (memcmp(frame_recv_buffer, frame_buffer_with_vlan, 
+                ETR_FRAME_WITH_VLAN_SIZE) == 0)
             {
                 count_succes_frame++;
             }
@@ -182,7 +185,9 @@ int main(int argc, char **argv)
     {
         printf("-------------------------\n");
         printf("Tests failed\n");
-        printf("successfully %d, failed %d tests\n", count_succes_frame, COUNT_SEND_FRAME - count_succes_frame);
+        printf("successfully %d, failed %d tests\n", count_succes_frame, 
+            COUNT_SEND_FRAME - count_succes_frame);
+            
         printf("-------------------------\n");
     }
 
