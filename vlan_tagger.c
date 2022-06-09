@@ -85,8 +85,11 @@ int main(int argc, char **argv)
     }
 
     if (argv_process(argc, argv) == 1)
+    {
+        return 1;
+    }
 
-        return_code = is_interface_exist(in_if);
+    return_code = is_interface_exist(in_if);
     if (return_code == -1)
     {
         fprintf(stderr, "Can't get info about %s\n", in_if);
@@ -329,6 +332,7 @@ int tagger(
     struct iphdr *iph = {0};
     struct in_addr send_ip_addr = {0};
     struct vlanhdr vlanhdr = {0};
+    unsigned char *pt = NULL;
     int i = 0;
     int vlan = 0;
 
@@ -348,13 +352,12 @@ int tagger(
     }
 
     /* Для 802.1Q используется значение 0x8100 в качестве tpid*/
-    vlanhdr.tpid = ETH_P_8021Q;
+    vlanhdr.tpid = 0x8100;
     vlanhdr.tci = vlan;
     vlanhdr.tci &= 0x1F;
 
     memcpy(buffer + ETH_ALEN * 2, &vlanhdr, sizeof(struct vlanhdr));
->>>>>>> 94b57b7... feat tagger function (refs #83)
-
+    
     return 0;
 }
 
