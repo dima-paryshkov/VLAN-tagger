@@ -10,8 +10,8 @@ ip link add eth1 type dummy
 ifconfig eth1 hw ether C8:D7:4A:4E:47:51
 sudo ip link set dev eth1 up
 
-./autotest "eth1" "eth2"
+./autotest "eth0" "eth1"
+
+ip link delete eth0 type dummy
 
 ip link delete eth1 type dummy
-
-ip link delete eth2 type dummy
