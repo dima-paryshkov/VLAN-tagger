@@ -70,13 +70,11 @@ int tagger(
 
 int main(int argc, char **argv)
 {
-<<<<<<< HEAD
     struct ifreq interface = {0};
     int socket_in_raw = 0;
     struct sockaddr socket_in_raw_address = {0};
     int socket_raw_adress_size = sizeof(socket_in_raw_address);
     unsigned char *frame_buffer = NULL;
-    struct ethhdr *received_frame = {0};
     struct iphdr *iph = {0};
     struct in_addr ip = {0};
     int frame_size = 0;
@@ -121,18 +119,6 @@ int main(int argc, char **argv)
         return -2;
     }
     else if (return_code == 1)
-=======
-    char* INTERFACE_NAME = NULL;
-    struct ifreq interface = {0};
-    int socket_raw = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
-    struct sockaddr socket_raw_address = {0};
-    int socket_raw_adress_size = sizeof(socket_raw_address);
-    //По стандарту 802.1Q фрейм занимает 1552 байт
-    unsigned char* frame_buffer = (unsigned char *)malloc(ETHERNET_FRAME_SIZE);
-    struct ethhdr* received_frame = {0};
-    int frame_size = 0;
-    if (argv[1] == NULL || argc > 2) 
->>>>>>> 45d7601... Update vlan_tagger.c по замечаниям к codestyle
     {
         fprintf(stderr, "Output interface %s doesn't exist\n", out_if);
         return -3;
@@ -143,7 +129,6 @@ int main(int argc, char **argv)
         perror("fopen(logfile)");
         return -1;
     }
-<<<<<<< HEAD
 
     create_daemon();
 
@@ -154,39 +139,21 @@ int main(int argc, char **argv)
     socket_in_raw = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
     frame_buffer = malloc(ETHERNET_FRAME_SIZE);
     snprintf(interface.ifr_name, sizeof(interface.ifr_name), "%s", in_if);
-=======
-    INTERFACE_NAME = (char*)malloc(sizeof(argv[1]));
-    memcpy(INTERFACE_NAME, argv[1], sizeof(argv[1]));
-    snprintf(interface.ifr_name, sizeof(interface.ifr_name), "%s", INTERFACE_NAME);
-    if (socket_raw < 0) 
->>>>>>> 45d7601... Update vlan_tagger.c по замечаниям к codestyle
     {
         perror("Creating raw socket failure. Try running as superuser");
         return -2;
     }
-<<<<<<< HEAD
     if (setsockopt(socket_in_raw, SOL_SOCKET, SO_BINDTODEVICE, (void *)&interface,
                    sizeof(interface)) < 0)
-=======
-    if (setsockopt(socket_raw, SOL_SOCKET, SO_BINDTODEVICE, (void*)&interface, 
-            sizeof(interface)) < 0)
->>>>>>> 45d7601... Update vlan_tagger.c по замечаниям к codestyle
     {
         perror("Failure binding socket to interface");
         return -3;
     }
-<<<<<<< HEAD
 
     while(is_daemon_running)
     {
         frame_size = recvfrom(socket_in_raw, frame_buffer, ETHERNET_FRAME_SIZE, 0,
                             &socket_in_raw_address, &socket_raw_adress_size);
-=======
-    while(1)
-    {
-        frame_size = recvfrom(socket_raw, frame_buffer, ETHERNET_FRAME_SIZE, 0,
-                            &socket_raw_address, &socket_raw_adress_size);
->>>>>>> 45d7601... Update vlan_tagger.c по замечаниям к codestyle
         if (frame_size < 0) 
         {
             fprintf(log_file, "Failure accepting frame\n");
@@ -237,7 +204,6 @@ static int is_collision(struct ip_vlan_t *ip_vlan_entry)
 
     return 0;
 }
-<<<<<<< HEAD
 
 static int add_ip_to_pool(struct ip_vlan_t *ip_vlan_entry)
 {
@@ -493,5 +459,3 @@ static void create_daemon(void)
         close(x);
     }
 }
-=======
->>>>>>> 45d7601... Update vlan_tagger.c по замечаниям к codestyle
