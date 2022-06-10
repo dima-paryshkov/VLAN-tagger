@@ -13,9 +13,11 @@
 #include <syslog.h>
 #include <net/ethernet.h>
 #include <netinet/ip.h>
+#include <net/if.h>
 
 #include "interface.h"
 
+#define ETHERNET_FRAME_SIZE 1552
 #define DFLT_CONF_FILE ".pool_ip_vlan.conf"
 #define LOGFILE_NAME "vlan_tagger.log"
 
@@ -46,7 +48,7 @@ char *name_conf_file = NULL;
 static int is_collision(struct ip_vlan_t *ip_vlan_entry);
 
 static int argv_process(
-    int argc, 
+    int argc,
     char **argv);
 
 void print_pool_to_file(
@@ -63,11 +65,20 @@ static void create_daemon(void);
 static void exit_signal_handler(int signum);
 
 int tagger(
-    unsigned char *buffer, 
+    unsigned char *buffer,
     size_t size_buffer);
 
 int main(int argc, char **argv)
 {
+    struct ifreq interface = {0};
+    int socket_in_raw = 0;
+    struct sockaddr socket_in_raw_address = {0};
+    int socket_raw_adress_size = sizeof(socket_in_raw_address);
+    unsigned char *frame_buffer = NULL;
+    struct iphdr *iph = {0};
+    struct in_addr ip = {0};
+    int frame_size = 0;
+
     int return_code = 0;
     FILE *log_file = NULL;
 
@@ -122,8 +133,45 @@ int main(int argc, char **argv)
     create_daemon();
 
     /*
-        Body of daemon 
-    */ 
+        Body of daemon
+    */
+
+    socket_in_raw = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
+    frame_buffer = malloc(ETHERNET_FRAME_SIZE);
+    snprintf(interface.ifr_name, sizeof(interface.ifr_name), "%s", in_if);
+    {
+        perror("Creating raw socket failure. Try running as superuser");
+        return -2;
+    }
+    if (setsockopt(socket_in_raw, SOL_SOCKET, SO_BINDTODEVICE, (void *)&interface,
+                   sizeof(interface)) < 0)
+    {
+        perror("Failure binding socket to interface");
+        return -3;
+    }
+
+    while(is_daemon_running)
+    {
+        frame_size = recvfrom(socket_in_raw, frame_buffer, ETHERNET_FRAME_SIZE, 0,
+                            &socket_in_raw_address, &socket_raw_adress_size);
+        if (frame_size < 0) 
+        {
+            fprintf(log_file, "Failure accepting frame\n");
+        }
+
+        if (tagger(frame_buffer, frame_size) == -1)
+        {
+            iph = (struct iphdr *)(frame_buffer + sizeof(struct ethhdr));
+            ip.s_addr = iph->saddr;
+            fprintf(log_file, "ip %s doesn't exist in pool\n", inet_ntoa(ip));
+        }
+
+        /*
+            Send buffer to output interface
+        */ 
+
+    }
+
 
     return 0;
 }
@@ -178,8 +226,8 @@ static int add_ip_to_pool(struct ip_vlan_t *ip_vlan_entry)
 }
 
 void print_pool_to_file(
-    char *filename, 
-    struct ip_vlan_t *pool_addrs, 
+    char *filename,
+    struct ip_vlan_t *pool_addrs,
     size_t size_pool)
 {
     FILE *pool_conffile = NULL;
@@ -199,7 +247,7 @@ void print_pool_to_file(
 }
 
 static int argv_process(
-    int argc, 
+    int argc,
     char **argv)
 {
     struct ip_vlan_t ip_vlan_entry = {0};
@@ -309,7 +357,7 @@ static int argv_process(
         fprintf(stderr, "Too few arguments or incorrect value of arguments. Use '%s -h' for detail\n", argv[0]);
         return 1;
     }
-    
+
     return 0;
 }
 
@@ -326,7 +374,7 @@ int find_vlan_by_ip(struct in_addr ip_addr)
 }
 
 int tagger(
-    unsigned char *buffer, 
+    unsigned char *buffer,
     size_t size_buffer)
 {
     struct iphdr *iph = {0};
@@ -357,7 +405,7 @@ int tagger(
     vlanhdr.tci &= 0x1F;
 
     memcpy(buffer + ETH_ALEN * 2, &vlanhdr, sizeof(struct vlanhdr));
-    
+
     return 0;
 }
 
