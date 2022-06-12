@@ -14,24 +14,23 @@
 #include <net/ethernet.h>
 #include <netinet/ip.h>
 #include <net/if.h>
+#include <features.h>
+#include <asm/types.h>
+#include <linux/if_packet.h>
+#include <linux/if_ether.h>
+#include <sys/ioctl.h>
 #include "interface/interface.h"
 #include "ip_pool/ip_pool.h"
-#define ETHERNET_FRAME_SIZE 1552
+
+#define ETHERNET_FRAME_SIZE 1522
 #define DFLT_CONF_FILE ".pool_ip_vlan.conf"
 #define LOGFILE_NAME "vlan_tagger.log"
-
 const int LEN_IF_NAME = 15;
-
-
-
 int is_daemon_running = 1;
-
-
 
 char *in_if = NULL;
 char *out_if = NULL;
 char *name_conf_file = NULL;
-
 
 static int argv_process(
     int argc,
@@ -46,8 +45,8 @@ int tagger(
     size_t size_buffer);
 
 static int handle_interface_shutdown(
-    char *in_if, 
-    char *out_if, 
+    char *in_if,
+    char *out_if,
     FILE *log_file);
 
 int main(int argc, char **argv)
@@ -56,13 +55,12 @@ int main(int argc, char **argv)
     struct ifreq interface_out = {0};
     int socket_in_raw = 0;
     int socket_out_raw = 0;
-    struct sockaddr socket_in_raw_address = {0};
-    struct sockaddr socket_out_raw_address = {0};
+    struct sockaddr_ll socket_in_raw_address = {0};
+    struct sockaddr_ll socket_out_raw_address = {0};
     unsigned char *frame_buffer = NULL;
     struct iphdr *iph = {0};
     struct in_addr ip = {0};
-    int socket_in_raw_adress_size = sizeof(socket_in_raw_address);
-    int socket_out_raw_adress_size = sizeof(socket_out_raw_address);
+    int socket_raw_adress_size = sizeof(struct sockaddr_ll);
     int frame_size = 0;
 
     int return_code = 0;
@@ -78,85 +76,98 @@ int main(int argc, char **argv)
     if (pool_ip_vlan == NULL)
     {
         perror("malloc");
-        return -11;
+        return -1;
     }
 
     if (argv_process(argc, argv) == 1)
     {
-        return 1;
+        return 0;
     }
 
     return_code = is_interface_exist(in_if);
     if (return_code == -1)
     {
         fprintf(stderr, "Can't get info about %s\n", in_if);
-        return -2;
+        return -1;
     }
     else if (return_code == 1)
     {
         fprintf(stderr, "Input interface %s doesn't exist\n", in_if);
-        return -3;
+        return -1;
     }
 
     return_code = is_interface_exist(out_if);
     if (return_code == -1)
     {
         fprintf(stderr, "Can't get info about %s\n", out_if);
-        return -2;
+        return -1;
     }
     else if (return_code == 1)
     {
         fprintf(stderr, "Output interface %s doesn't exist\n", out_if);
-        return -3;
+        return -1;
     }
+
+    // return_code = create_daemon();
+    // if (return_code == 0)
+    // {
+    //     return 0;
+    // }
+    // else if (return_code == -1)
+    // {
+    //     fprintf(stderr, "Can't create daemon\n");
+    //     return -1;
+    // }
 
     if ((log_file = fopen(LOGFILE_NAME, "w")) == NULL)
     {
         perror("fopen(logfile)");
         return -1;
     }
-
-    create_daemon();
-
-    /*
-        Body of daemon
-    */
-
     socket_in_raw = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
+    if (socket_in_raw < 0)
     {
-        perror("Creating raw socket failure. Try running as superuser");
-        return -2;
+        fprintf(log_file, "Creating raw socket failure. Try running as superuser: %s\n", strerror(errno));
+        fclose(log_file);
+        return -1;
     }
-    
-    snprintf(interface_in.ifr_name, sizeof(interface_in.ifr_name), "%s", in_if);
-    if (setsockopt(socket_in_raw, SOL_SOCKET, SO_BINDTODEVICE, (void *)&interface_in,
-                   sizeof(interface_in)) < 0)
+
+    socket_in_raw_address.sll_family = AF_PACKET;
+    socket_in_raw_address.sll_protocol = htons(ETH_P_ALL);
+    socket_in_raw_address.sll_ifindex = if_nametoindex(in_if);
+    if (bind(socket_in_raw, (struct sockaddr *)&socket_in_raw_address, socket_raw_adress_size) < 0)
     {
-        perror("Failure binding socket to interface");
-        return -3;
+        perror("bind failed\n");
+        fprintf(log_file, "Bind socket to interface: %s\n", strerror(errno));
+        fclose(log_file);
+        return -1;
     }
 
     socket_out_raw = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
-    if (socket_out_raw < 0) 
+    if (socket_out_raw < 0)
     {
-        perror("Creating raw socket failure. Try running as superuser");
-        return -2;
+        fprintf(log_file, "Creating raw socket failure. Try running as superuser: %s\n", strerror(errno));
+        fclose(log_file);
+        return -1;
     }
-    
-    snprintf(interface_out.ifr_name, sizeof(interface_out.ifr_name), "%s", out_if);
-    if (setsockopt(socket_out_raw, SOL_SOCKET, SO_BINDTODEVICE, (void*)&interface_out, sizeof(interface_out)) < 0)
+
+    socket_out_raw_address.sll_family = AF_PACKET;
+    socket_out_raw_address.sll_protocol = htons(ETH_P_ALL);
+    socket_out_raw_address.sll_ifindex = if_nametoindex(out_if);
+    if (bind(socket_out_raw, (struct sockaddr *)&socket_out_raw_address, socket_raw_adress_size) < 0)
     {
-        perror("Failure binding socket to interface");
-        return -3;
+        fprintf(log_file, "Bind socket to interface: %s\n", strerror(errno));
+        fclose(log_file);
+        return -1;
     }
 
     frame_buffer = malloc(ETHERNET_FRAME_SIZE);
 
-    while(is_daemon_running)
+    while (is_daemon_running)
     {
         frame_size = recvfrom(socket_in_raw, frame_buffer, ETHERNET_FRAME_SIZE, 0,
-                            &socket_in_raw_address, &socket_in_raw_adress_size);
-        if (frame_size < 0) 
+                              (struct sockaddr *)&socket_in_raw_address, &socket_raw_adress_size);
+        if (frame_size < 0)
         {
             fprintf(log_file, "Failure accepting frame from %s\n", out_if);
             handle_interface_shutdown(in_if, out_if, log_file);
@@ -166,18 +177,22 @@ int main(int argc, char **argv)
         {
             iph = (struct iphdr *)(frame_buffer + sizeof(struct ethhdr));
             ip.s_addr = iph->saddr;
-            fprintf(log_file, "ip %s doesn't exist in pool\n", inet_ntoa(ip));
+            fprintf(log_file, "ip %s\n", inet_ntoa(ip));
         }
 
-        frame_size = sendto(socket_out_raw, frame_buffer, ETHERNET_FRAME_SIZE, 0,
-                            &socket_out_raw_address, socket_out_raw_adress_size);
-        if (frame_size < 0) 
+        iph = (struct iphdr *)(frame_buffer + sizeof(struct ethhdr));
+        ip.s_addr = iph->saddr;
+        fprintf(stdout, "ip %s\n", inet_ntoa(ip));
+
+        frame_size = sendto(socket_out_raw, frame_buffer, frame_size + 4, 0,
+                            (struct sockaddr *)&socket_out_raw_address, socket_raw_adress_size);
+        if (frame_size < 0)
         {
             fprintf(log_file, "Failure send frame to %s\n", out_if);
             handle_interface_shutdown(in_if, out_if, log_file);
         }
     }
-
+    fclose(log_file);
     return 0;
 }
 
@@ -296,8 +311,6 @@ static int argv_process(
     return 0;
 }
 
-
-
 int tagger(
     unsigned char *buffer,
     size_t size_buffer)
@@ -352,7 +365,11 @@ static int create_daemon(void)
         return -1;
     }
     else if (pid > 0)
-        sid = setsid();
+    {
+        return 0;
+    }
+
+    sid = setsid();
     if (sid == -1)
     {
         perror("setsid");
@@ -377,23 +394,23 @@ static int create_daemon(void)
 
     umask(0);
 
-    chdir("/");
-
     for (int x = sysconf(_SC_OPEN_MAX); x >= 0; x--)
     {
         close(x);
     }
+
+    return 1;
 }
 
 static int handle_interface_shutdown(
-    char *in_if, 
-    char *out_if, 
+    char *in_if,
+    char *out_if,
     FILE *log_file)
 {
     if (is_interface_online(in_if) != 1)
     {
         fprintf(log_file, "input if(%s) shutdown\n", in_if);
-        while (is_interface_online(in_if) != 1 )
+        while (is_interface_online(in_if) != 1)
         {
             sleep(1);
         }
@@ -403,7 +420,7 @@ static int handle_interface_shutdown(
     if (is_interface_online(out_if) != 1)
     {
         fprintf(log_file, "output if(%s) shutdown\n", out_if);
-        while (is_interface_online(out_if) != 1 )
+        while (is_interface_online(out_if) != 1)
         {
             sleep(1);
         }
@@ -412,7 +429,7 @@ static int handle_interface_shutdown(
 
     /*
         The function will end only when both interfaces are available.
-    */ 
+    */
     if (is_interface_online(in_if) != 1 && is_interface_online(out_if) != 1)
     {
         handle_interface_shutdown(in_if, out_if, log_file);

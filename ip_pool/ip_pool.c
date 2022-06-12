@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <arpa/inet.h>
 #include "ip_pool.h"
 
 struct ip_vlan_t *pool_ip_vlan = NULL;

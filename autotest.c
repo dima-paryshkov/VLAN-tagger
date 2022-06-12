@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
 #include <stdio.h>
 #include <string.h>
 #include <malloc.h>
@@ -9,9 +10,14 @@
 #include <arpa/inet.h>
 #include <linux/ip.h>
 #include <netinet/in.h>
+#include <features.h>
+#include <asm/types.h>
+#include <linux/if_packet.h>
+#include <linux/if_ether.h>
+#include <sys/ioctl.h>
 
-#define ETR_FRAME_SIZE 1500
-#define ETR_FRAME_WITH_VLAN_SIZE 1504
+#define ETR_FRAME_SIZE 1496
+#define ETR_FRAME_WITH_VLAN_SIZE 1500
 
 struct vlanhdr
 {
@@ -19,8 +25,8 @@ struct vlanhdr
     uint16_t tci;
 };
 
-char list_ip[5][16] = {"140.106.157.116", "111.218.39.46", "59.108.145.157", \
-    "142.15.121.152", "6.162.212.148"};
+char list_ip[5][16] = {"140.106.157.116", "111.218.39.46", "59.108.145.157",
+                       "142.15.121.152", "6.162.212.148"};
 
 int list_vlan[5] = {3, 5, 4, 6, 5};
 
@@ -85,10 +91,9 @@ int main(int argc, char **argv)
     struct ifreq out_if = {0};
     int socket_in_if = 0;
     int socket_out_if = 0;
-    struct sockaddr socket_in_address = {0};
-    struct sockaddr socket_out_address = {0};
-    unsigned int socket_in_adress_size = 0;
-    unsigned int socket_out_adress_size = 0;
+    struct sockaddr_ll socket_in_address = {0};
+    struct sockaddr_ll socket_out_address = {0};
+    unsigned int socket_adress_size = sizeof(struct sockaddr_ll);
     unsigned char *frame_buffer = NULL;
     unsigned char *frame_buffer_with_vlan = NULL;
     unsigned char *frame_recv_buffer = NULL;
@@ -111,14 +116,14 @@ int main(int argc, char **argv)
         return -2;
     }
 
-    snprintf(in_if.ifr_name, sizeof(in_if.ifr_name), "%s", in_if_name);
-
-    socket_in_adress_size = sizeof(socket_in_address);
-    if (setsockopt(socket_in_if, SOL_SOCKET, SO_BINDTODEVICE, (void *)&in_if,
-                   sizeof(in_if)) < 0)
+    socket_in_address.sll_family = AF_PACKET;
+    socket_in_address.sll_protocol = htons(ETH_P_ALL);
+    socket_in_address.sll_ifindex = if_nametoindex(in_if_name);
+    if (bind(socket_in_if, (struct sockaddr *)&socket_in_address, socket_adress_size) < 0)
     {
-        perror("Failure binding socket to interface");
-        return -3;
+        perror("bind failed\n");
+        close(socket_in_if);
+        return -1;
     }
 
     socket_out_if = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
@@ -128,45 +133,42 @@ int main(int argc, char **argv)
         return -2;
     }
 
-    snprintf(out_if.ifr_name, sizeof(out_if.ifr_name), "%s", out_if_name);
-
-    socket_out_adress_size = sizeof(socket_out_address);
-    if (setsockopt(socket_out_if, SOL_SOCKET, SO_BINDTODEVICE, (void *)&out_if,
-                   sizeof(out_if)) < 0)
+    socket_out_address.sll_family = AF_PACKET;
+    socket_out_address.sll_protocol = htons(ETH_P_ALL);
+    socket_out_address.sll_ifindex = if_nametoindex(out_if_name);
+    if (bind(socket_out_if, (struct sockaddr *)&socket_out_address, socket_adress_size) < 0)
     {
-        perror("Failure binding socket to interface");
-        return -3;
+        perror("bind failed\n");
+        close(socket_in_if);
+        close(socket_out_if);
+        return -1;
     }
 
     frame_buffer = malloc(ETR_FRAME_SIZE);
     frame_buffer_with_vlan = malloc(ETR_FRAME_WITH_VLAN_SIZE);
     frame_recv_buffer = malloc(ETR_FRAME_WITH_VLAN_SIZE);
 
-    frame_size = recvfrom(socket_in_if, frame_recv_buffer, ETR_FRAME_SIZE, 0,
-        &socket_in_address, &socket_in_adress_size);
-
     for (int i = 0; i < COUNT_SEND_FRAME; i++)
     {
         create_frame(frame_buffer, frame_buffer_with_vlan);
 
-        frame_size = sendto(socket_in_if, frame_buffer, ETR_FRAME_SIZE, 0,
-            &socket_in_address, socket_in_adress_size);
+        frame_size = write(socket_in_if, frame_buffer, ETR_FRAME_SIZE);
         if (frame_size != ETR_FRAME_SIZE || frame_size < 0)
         {
             perror("sendto");
         }
         else
         {
-            while ((frame_size = recvfrom(socket_out_if, frame_recv_buffer, 
-                ETR_FRAME_WITH_VLAN_SIZE, 0, &socket_out_address, 
-                &socket_out_adress_size)) != ETR_FRAME_WITH_VLAN_SIZE);
+            while ((frame_size = recvfrom(socket_out_if, frame_recv_buffer,
+                ETR_FRAME_WITH_VLAN_SIZE, 0, (struct sockaddr *)&socket_out_address,
+                &socket_adress_size)) != ETR_FRAME_WITH_VLAN_SIZE) ;
 
-            if ( frame_size < 0)
+            if (frame_size < 0)
             {
                 perror("recvfrom");
             }
-            else if (memcmp(frame_recv_buffer, frame_buffer_with_vlan, 
-                ETR_FRAME_WITH_VLAN_SIZE) == 0)
+            else if (memcmp(frame_recv_buffer, frame_buffer_with_vlan,
+                            ETR_FRAME_WITH_VLAN_SIZE) == 0)
             {
                 count_succes_frame++;
             }
@@ -185,9 +187,9 @@ int main(int argc, char **argv)
     {
         printf("-------------------------\n");
         printf("Tests failed\n");
-        printf("successfully %d, failed %d tests\n", count_succes_frame, 
-            COUNT_SEND_FRAME - count_succes_frame);
-            
+        printf("successfully %d, failed %d tests\n", count_succes_frame,
+               COUNT_SEND_FRAME - count_succes_frame);
+
         printf("-------------------------\n");
     }
 
