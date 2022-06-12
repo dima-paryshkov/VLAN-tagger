@@ -3,7 +3,6 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <malloc.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <errno.h>
 #include <string.h>
@@ -14,19 +13,17 @@
 #include <net/ethernet.h>
 #include <netinet/ip.h>
 #include <net/if.h>
-#include <features.h>
-#include <asm/types.h>
 #include <linux/if_packet.h>
 #include <linux/if_ether.h>
-#include <sys/ioctl.h>
+
 #include "interface/interface.h"
 #include "ip_pool/ip_pool.h"
 
 #define ETHERNET_FRAME_SIZE 1522
-#define DFLT_CONF_FILE ".pool_ip_vlan.conf"
-#define LOGFILE_NAME "vlan_tagger.log"
+#define DFLT_CONF_FILE "ip_pool/.pool_ip_vlan.conf"
+#define LOGFILE_NAME "vlan_tagger"
+
 const int LEN_IF_NAME = 15;
-int is_daemon_running = 1;
 
 char *in_if = NULL;
 char *out_if = NULL;
@@ -40,14 +37,15 @@ static int create_daemon(void);
 
 static void exit_signal_handler(int signum);
 
-int tagger(
+static int tagger(
     unsigned char *buffer,
     size_t size_buffer);
 
-static int handle_interface_shutdown(
-    char *in_if,
-    char *out_if,
-    FILE *log_file);
+static void Socket(
+    int *socket_raw,
+    struct sockaddr_ll *socket_raw_address,
+    int socket_raw_adress_size,
+    char *if_name);
 
 int main(int argc, char **argv)
 {
@@ -64,7 +62,6 @@ int main(int argc, char **argv)
     int frame_size = 0;
 
     int return_code = 0;
-    FILE *log_file = NULL;
 
     if (argc < 2)
     {
@@ -79,120 +76,68 @@ int main(int argc, char **argv)
         return -1;
     }
 
-    if (argv_process(argc, argv) == 1)
+    return_code = argv_process(argc, argv);
+    if (return_code == 1)
     {
         return 0;
     }
-
-    return_code = is_interface_exist(in_if);
-    if (return_code == -1)
+    else if (return_code == -1)
     {
-        fprintf(stderr, "Can't get info about %s\n", in_if);
-        return -1;
-    }
-    else if (return_code == 1)
-    {
-        fprintf(stderr, "Input interface %s doesn't exist\n", in_if);
         return -1;
     }
 
-    return_code = is_interface_exist(out_if);
-    if (return_code == -1)
+    check_interface(in_if);
+    check_interface(out_if);
+
+    return_code = create_daemon();
+    if (return_code == 0)
     {
-        fprintf(stderr, "Can't get info about %s\n", out_if);
-        return -1;
+        return 0;
     }
-    else if (return_code == 1)
+    else if (return_code == -1)
     {
-        fprintf(stderr, "Output interface %s doesn't exist\n", out_if);
+        fprintf(stderr, "Can't create daemon\n");
         return -1;
     }
 
-    // return_code = create_daemon();
-    // if (return_code == 0)
-    // {
-    //     return 0;
-    // }
-    // else if (return_code == -1)
-    // {
-    //     fprintf(stderr, "Can't create daemon\n");
-    //     return -1;
-    // }
+    syslog(LOG_INFO, "daemon vlan-tagger is running");
 
-    if ((log_file = fopen(LOGFILE_NAME, "w")) == NULL)
-    {
-        perror("fopen(logfile)");
-        return -1;
-    }
-    socket_in_raw = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
-    if (socket_in_raw < 0)
-    {
-        fprintf(log_file, "Creating raw socket failure. Try running as superuser: %s\n", strerror(errno));
-        fclose(log_file);
-        return -1;
-    }
-
-    socket_in_raw_address.sll_family = AF_PACKET;
-    socket_in_raw_address.sll_protocol = htons(ETH_P_ALL);
-    socket_in_raw_address.sll_ifindex = if_nametoindex(in_if);
-    if (bind(socket_in_raw, (struct sockaddr *)&socket_in_raw_address, socket_raw_adress_size) < 0)
-    {
-        perror("bind failed\n");
-        fprintf(log_file, "Bind socket to interface: %s\n", strerror(errno));
-        fclose(log_file);
-        return -1;
-    }
-
-    socket_out_raw = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
-    if (socket_out_raw < 0)
-    {
-        fprintf(log_file, "Creating raw socket failure. Try running as superuser: %s\n", strerror(errno));
-        fclose(log_file);
-        return -1;
-    }
-
-    socket_out_raw_address.sll_family = AF_PACKET;
-    socket_out_raw_address.sll_protocol = htons(ETH_P_ALL);
-    socket_out_raw_address.sll_ifindex = if_nametoindex(out_if);
-    if (bind(socket_out_raw, (struct sockaddr *)&socket_out_raw_address, socket_raw_adress_size) < 0)
-    {
-        fprintf(log_file, "Bind socket to interface: %s\n", strerror(errno));
-        fclose(log_file);
-        return -1;
-    }
+    Socket(&socket_in_raw, &socket_in_raw_address, socket_raw_adress_size, in_if);
+    Socket(&socket_out_raw, &socket_out_raw_address, socket_raw_adress_size, out_if);
 
     frame_buffer = malloc(ETHERNET_FRAME_SIZE);
+    if (frame_buffer == NULL)
+    {
+        syslog(LOG_ERR, "malloc: %s\n", strerror(errno));
+        return -1;
+    }
 
-    while (is_daemon_running)
+    while (1)
     {
         frame_size = recvfrom(socket_in_raw, frame_buffer, ETHERNET_FRAME_SIZE, 0,
                               (struct sockaddr *)&socket_in_raw_address, &socket_raw_adress_size);
         if (frame_size < 0)
         {
-            fprintf(log_file, "Failure accepting frame from %s\n", out_if);
-            handle_interface_shutdown(in_if, out_if, log_file);
+            syslog(LOG_WARNING, "Failure accepting frame from %s\n", out_if);
+            handle_interface_shutdown(in_if, out_if);
         }
 
         if (tagger(frame_buffer, frame_size) == -1)
         {
             iph = (struct iphdr *)(frame_buffer + sizeof(struct ethhdr));
             ip.s_addr = iph->saddr;
-            fprintf(log_file, "ip %s\n", inet_ntoa(ip));
+            syslog(LOG_WARNING, "ip %s doesn't exist in pool\n", inet_ntoa(ip));
         }
-
-        iph = (struct iphdr *)(frame_buffer + sizeof(struct ethhdr));
-        ip.s_addr = iph->saddr;
-        fprintf(stdout, "ip %s\n", inet_ntoa(ip));
 
         frame_size = sendto(socket_out_raw, frame_buffer, frame_size + 4, 0,
                             (struct sockaddr *)&socket_out_raw_address, socket_raw_adress_size);
         if (frame_size < 0)
         {
-            fprintf(log_file, "Failure send frame to %s\n", out_if);
-            handle_interface_shutdown(in_if, out_if, log_file);
+            syslog(LOG_WARNING, "Failure send frame to %s\n", out_if);
+            handle_interface_shutdown(in_if, out_if);
         }
     }
-    fclose(log_file);
+    syslog(LOG_INFO, "daemon vlan-tagger finished work");
     return 0;
 }
 
@@ -218,7 +163,7 @@ static int argv_process(
             if (conf_file == NULL)
             {
                 fprintf(stderr, "Can't open file %s: %s\n", name_conf_file, strerror(errno));
-                return -12;
+                return -1;
             }
 
             in_if = malloc(LEN_IF_NAME);
@@ -226,7 +171,7 @@ static int argv_process(
             if (in_if == NULL || out_if == NULL)
             {
                 perror("malloc_if");
-                return -11;
+                return -1;
             }
 
             fscanf(conf_file, "%s %s", in_if, out_if);
@@ -265,7 +210,7 @@ static int argv_process(
                 {
                     fprintf(stderr, "Incorrect options\n");
                     fprintf(stderr, "Use '%s -h' for details\n", argv[0]);
-                    return -10;
+                    return -1;
                 }
 
                 ip_vlan_entry.vlan = atoi(argv[i + 1]);
@@ -311,7 +256,7 @@ static int argv_process(
     return 0;
 }
 
-int tagger(
+static int tagger(
     unsigned char *buffer,
     size_t size_buffer)
 {
@@ -332,13 +277,13 @@ int tagger(
         return -1;
     }
 
-    for (i = size_buffer - 1; i >= 16; i--)
+    for (i = size_buffer + 3; i >= 16; i--)
     {
         buffer[i] = buffer[i - 4];
     }
 
     /* Для 802.1Q используется значение 0x8100 в качестве tpid*/
-    vlanhdr.tpid = 0x8100;
+    vlanhdr.tpid = ETH_P_8021Q;
     vlanhdr.tci = vlan;
     vlanhdr.tci &= 0x1F;
 
@@ -349,7 +294,8 @@ int tagger(
 
 static void exit_signal_handler(int signum)
 {
-    is_daemon_running = 0;
+    syslog(LOG_INFO, "daemon vlan-tagger finished work");
+    exit(0);
 }
 
 static int create_daemon(void)
@@ -399,40 +345,33 @@ static int create_daemon(void)
         close(x);
     }
 
+    openlog(LOGFILE_NAME, LOG_PID, LOG_DAEMON);
+
     return 1;
 }
 
-static int handle_interface_shutdown(
-    char *in_if,
-    char *out_if,
-    FILE *log_file)
+static void Socket(
+    int *socket_raw,
+    struct sockaddr_ll *socket_raw_address,
+    int socket_raw_adress_size,
+    char *if_name)
 {
-    if (is_interface_online(in_if) != 1)
+    *socket_raw = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
+    if (*socket_raw < 0)
     {
-        fprintf(log_file, "input if(%s) shutdown\n", in_if);
-        while (is_interface_online(in_if) != 1)
-        {
-            sleep(1);
-        }
-        fprintf(log_file, "input if(%s) is working\n", in_if);
+        syslog(LOG_ERR, "Creating raw socket failure. Try running as superuser: %s\n", strerror(errno));
+        closelog();
+        exit(-1);
     }
 
-    if (is_interface_online(out_if) != 1)
+    socket_raw_address->sll_family = AF_PACKET;
+    socket_raw_address->sll_protocol = htons(ETH_P_ALL);
+    socket_raw_address->sll_ifindex = if_nametoindex(if_name);
+    if (bind(*socket_raw, (struct sockaddr *)socket_raw_address, socket_raw_adress_size) < 0)
     {
-        fprintf(log_file, "output if(%s) shutdown\n", out_if);
-        while (is_interface_online(out_if) != 1)
-        {
-            sleep(1);
-        }
-        fprintf(log_file, "output if(%s) is working", out_if);
+        perror("bind failed\n");
+        syslog(LOG_ERR, "Bind socket to interface: %s\n", strerror(errno));
+        closelog();
+        exit(-1);
     }
-
-    /*
-        The function will end only when both interfaces are available.
-    */
-    if (is_interface_online(in_if) != 1 && is_interface_online(out_if) != 1)
-    {
-        handle_interface_shutdown(in_if, out_if, log_file);
-    }
-    return 0;
 }

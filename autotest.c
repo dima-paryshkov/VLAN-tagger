@@ -43,13 +43,13 @@ int create_frame(unsigned char *frame_buffer, unsigned char *frame_buffer_with_v
 
     for (int i = 14; i < ETR_FRAME_SIZE; i++)
     {
-        frame_buffer[i] = 0xFF;
-        frame_buffer_with_vlan[i] = 0xFF;
+        frame_buffer[i] = 0xFE;
+        frame_buffer_with_vlan[i] = 0xFE;
     }
 
     for (int i = ETR_FRAME_SIZE; i < ETR_FRAME_WITH_VLAN_SIZE; i++)
     {
-        frame_buffer_with_vlan[i] = 0xFF;
+        frame_buffer_with_vlan[i] = 0xFE;
     }
 
     for (int i = 0; i < 6; i++)
@@ -74,7 +74,7 @@ int create_frame(unsigned char *frame_buffer, unsigned char *frame_buffer_with_v
 
     memcpy(frame_buffer_with_vlan + 12, &vlanhdr, sizeof(struct vlanhdr));
     hton_ip = htons(ETH_P_IP);
-    memcpy(frame_buffer_with_vlan + sizeof(struct vlanhdr), &hton_ip, 2);
+    memcpy(frame_buffer_with_vlan + 12 + sizeof(struct vlanhdr), &hton_ip, 2);
 
     iphdr = (struct iphdr *)(frame_buffer_with_vlan + sizeof(struct ether_header) + sizeof(struct vlanhdr));
     inet_aton(list_ip[num_ip_vlan], (struct in_addr *)&iphdr->saddr);
@@ -113,7 +113,7 @@ int main(int argc, char **argv)
     if (socket_in_if < 0)
     {
         perror("Creating raw socket failure. Try running as superuser");
-        return -2;
+        return -1;
     }
 
     socket_in_address.sll_family = AF_PACKET;
@@ -130,7 +130,7 @@ int main(int argc, char **argv)
     if (socket_out_if < 0)
     {
         perror("Creating raw socket failure. Try running as superuser");
-        return -2;
+        return -1;
     }
 
     socket_out_address.sll_family = AF_PACKET;
@@ -160,8 +160,17 @@ int main(int argc, char **argv)
         else
         {
             while ((frame_size = recvfrom(socket_out_if, frame_recv_buffer,
-                ETR_FRAME_WITH_VLAN_SIZE, 0, (struct sockaddr *)&socket_out_address,
-                &socket_adress_size)) != ETR_FRAME_WITH_VLAN_SIZE) ;
+                                          ETR_FRAME_WITH_VLAN_SIZE, 0, (struct sockaddr *)&socket_out_address,
+                                          &socket_adress_size)) != ETR_FRAME_WITH_VLAN_SIZE)
+                ;
+
+            if (strcmp(out_if_name, "lo") == 0)
+            {
+                while ((frame_size = recvfrom(socket_out_if, frame_recv_buffer,
+                                              ETR_FRAME_WITH_VLAN_SIZE, 0, (struct sockaddr *)&socket_out_address,
+                                              &socket_adress_size)) != ETR_FRAME_WITH_VLAN_SIZE)
+                    ;
+            }
 
             if (frame_size < 0)
             {
@@ -175,7 +184,7 @@ int main(int argc, char **argv)
         }
     }
 
-    printf("Test started using %s and %s if\n", in_if_name, out_if_name);
+    printf("Test started using %s and %s interface\n", in_if_name, out_if_name);
 
     if (count_succes_frame == COUNT_SEND_FRAME)
     {

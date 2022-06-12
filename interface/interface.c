@@ -6,6 +6,9 @@
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <linux/wireless.h>
+#include <syslog.h>
+#include <stdlib.h>
+
 #include "interface.h"
 
 int is_interface_online(char* interface) 
@@ -49,4 +52,54 @@ int is_interface_exist(const char *ifname)
 
     freeifaddrs(ifaddr);
     return 1;
+}
+
+void check_interface(char *_if)
+{
+    int return_code = 0;
+    return_code = is_interface_exist(_if);
+    if (return_code == -1)
+    {
+        fprintf(stderr, "Can't get info about %s\n", _if);
+        exit(-1);
+    }
+    else if (return_code == 1)
+    {
+        fprintf(stderr, "Input interface %s doesn't exist\n", _if);
+        exit(-1);
+    }
+}
+
+int handle_interface_shutdown(
+    char *in_if,
+    char *out_if)
+{
+    if (is_interface_online(in_if) != 1)
+    {
+        syslog(LOG_WARNING, "input if(%s) shutdown\n", in_if);
+        while (is_interface_online(in_if) != 1)
+        {
+            sleep(1);
+        }
+        syslog(LOG_WARNING, "input if(%s) is working\n", in_if);
+    }
+
+    if (is_interface_online(out_if) != 1)
+    {
+        syslog(LOG_WARNING, "output if(%s) shutdown\n", out_if);
+        while (is_interface_online(out_if) != 1)
+        {
+            sleep(1);
+        }
+        syslog(LOG_WARNING, "output if(%s) is working", out_if);
+    }
+
+    /*
+        The function will end only when both interfaces are available.
+    */
+    if (is_interface_online(in_if) != 1 && is_interface_online(out_if) != 1)
+    {
+        handle_interface_shutdown(in_if, out_if);
+    }
+    return 0;
 }
