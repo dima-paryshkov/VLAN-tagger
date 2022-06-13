@@ -112,6 +112,8 @@ int main(int argc, char **argv)
         return -1;
     }
 
+    sort_quick(pool_ip_vlan, 0, size_pool - 1);
+
     while (1)
     {
         frame_size = recvfrom(socket_in_raw, frame_buffer, ETHERNET_FRAME_SIZE, 0,
@@ -272,6 +274,7 @@ static int tagger(
     send_ip_addr.s_addr = iph->saddr;
 
     vlan = find_vlan_by_ip(send_ip_addr);
+
     if (vlan == -1)
     {
         return -1;

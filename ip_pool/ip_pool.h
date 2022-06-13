@@ -1,5 +1,4 @@
 #include <stddef.h>
-#include <netinet/ip.h>
 
 struct ip_vlan_t *pool_ip_vlan;
 size_t size_pool;
@@ -26,5 +25,7 @@ void print_pool_to_file(
     char* out_if);
 
 int add_ip_to_pool(struct ip_vlan_t *ip_vlan_entry);
+
+void sort_quick(struct ip_vlan_t *pool_ip_vlan, int first, int last);
 
 int find_vlan_by_ip(struct in_addr ip_addr);
